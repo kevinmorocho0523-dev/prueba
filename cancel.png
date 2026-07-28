@@ -1,0 +1,1369 @@
+"use strict";
+
+/* ==========================================
+   CONFIGURACIÓN
+=========================================== */
+
+const RUTA_MAPA_QGIS =
+    "./mapa/qgis2web/index.html";
+
+const titulosPanel = {
+    resumen: "Resumen territorial",
+    capas: "Capas geográficas",
+    datos: "Datos académicos",
+    ficha: "Ficha técnica"
+};
+
+const centroRespaldo = [
+    -3.3542,
+    -79.8350
+];
+
+const zoomRespaldo = 14;
+
+
+/* ==========================================
+   ELEMENTOS HTML
+=========================================== */
+
+const mapaQgis =
+    document.getElementById("mapaQgis");
+
+const pantallaCarga =
+    document.getElementById("pantallaCarga");
+
+const mapaError =
+    document.getElementById("mapaError");
+
+const tituloErrorMapa =
+    document.getElementById("tituloErrorMapa");
+
+const textoErrorMapa =
+    document.getElementById("textoErrorMapa");
+
+const btnReintentarMapa =
+    document.getElementById("btnReintentarMapa");
+
+const estadoSistema =
+    document.getElementById("estadoSistema");
+
+const textoEstado =
+    document.getElementById("textoEstado");
+
+const panelContextual =
+    document.getElementById("panelContextual");
+
+const tituloPanel =
+    document.getElementById("tituloPanel");
+
+const btnPanel =
+    document.getElementById("btnPanel");
+
+const btnCerrarPanel =
+    document.getElementById("btnCerrarPanel");
+
+const btnPantallaCompleta =
+    document.getElementById("btnPantallaCompleta");
+
+const btnInformacion =
+    document.getElementById("btnInformacion");
+
+const modalInformacion =
+    document.getElementById("modalInformacion");
+
+const btnCerrarModal =
+    document.getElementById("btnCerrarModal");
+
+const campoBusqueda =
+    document.getElementById("campoBusqueda");
+
+const btnBuscar =
+    document.getElementById("btnBuscar");
+
+const btnAcercar =
+    document.getElementById("btnAcercar");
+
+const btnAlejar =
+    document.getElementById("btnAlejar");
+
+const btnCentrar =
+    document.getElementById("btnCentrar");
+
+const textoCoordenadas =
+    document.getElementById("textoCoordenadas");
+
+const opcionesMenu =
+    document.querySelectorAll(".opcion-menu");
+
+const seccionesPanel =
+    document.querySelectorAll(".seccion-panel");
+
+
+/* ==========================================
+   REFERENCIAS DEL MAPA INTERNO
+=========================================== */
+
+let ventanaMapa = null;
+let mapaInterno = null;
+let leafletInterno = null;
+
+let centroInicial = null;
+let zoomInicial = null;
+
+let temporizadorConexion = null;
+let intentosConexion = 0;
+let eventosMapaRegistrados = false;
+
+const MAXIMO_INTENTOS = 60;
+const INTERVALO_CONEXION = 250;
+
+
+/* ==========================================
+   ESTADO DEL SISTEMA
+=========================================== */
+
+function actualizarEstado(
+    texto,
+    tipo = "cargando"
+) {
+    if (textoEstado) {
+        textoEstado.textContent = texto;
+    }
+
+    if (!estadoSistema) {
+        return;
+    }
+
+    estadoSistema.classList.remove(
+        "activo",
+        "error"
+    );
+
+    if (tipo === "activo") {
+        estadoSistema.classList.add("activo");
+    }
+
+    if (tipo === "error") {
+        estadoSistema.classList.add("error");
+    }
+}
+
+
+/* ==========================================
+   PANTALLA DE CARGA
+=========================================== */
+
+function mostrarPantallaCarga(texto) {
+    if (pantallaCarga) {
+        pantallaCarga.classList.remove("oculto");
+
+        const parrafo =
+            pantallaCarga.querySelector("p");
+
+        if (parrafo && texto) {
+            parrafo.textContent = texto;
+        }
+    }
+
+    if (mapaError) {
+        mapaError.classList.add("oculto");
+    }
+
+    if (mapaQgis) {
+        mapaQgis.classList.remove(
+            "visible",
+            "oculto"
+        );
+    }
+}
+
+function ocultarPantallaCarga() {
+    if (pantallaCarga) {
+        pantallaCarga.classList.add("oculto");
+    }
+}
+
+
+/* ==========================================
+   MOSTRAR ERROR
+=========================================== */
+
+function mostrarError(
+    titulo,
+    mensaje
+) {
+    detenerConexion();
+    ocultarPantallaCarga();
+
+    if (mapaQgis) {
+        mapaQgis.classList.add("oculto");
+    }
+
+    if (mapaError) {
+        mapaError.classList.remove("oculto");
+    }
+
+    if (tituloErrorMapa) {
+        tituloErrorMapa.textContent = titulo;
+    }
+
+    if (textoErrorMapa) {
+        textoErrorMapa.textContent = mensaje;
+    }
+
+    actualizarEstado(
+        "Error al cargar el mapa",
+        "error"
+    );
+}
+
+
+/* ==========================================
+   LIMPIAR REFERENCIAS
+=========================================== */
+
+function limpiarReferenciasMapa() {
+    ventanaMapa = null;
+    mapaInterno = null;
+    leafletInterno = null;
+
+    centroInicial = null;
+    zoomInicial = null;
+
+    eventosMapaRegistrados = false;
+}
+
+
+/* ==========================================
+   CARGAR EL MAPA
+=========================================== */
+
+function cargarMapaQgis() {
+    if (!mapaQgis) {
+        return;
+    }
+
+    if (window.location.protocol === "file:") {
+        mostrarError(
+            "Abre la página con Live Server",
+            "Haz clic derecho sobre el index.html principal " +
+            "y selecciona Open with Live Server."
+        );
+
+        return;
+    }
+
+    detenerConexion();
+    limpiarReferenciasMapa();
+
+    mostrarPantallaCarga(
+        "Cargando la exportación original de Qgis2web..."
+    );
+
+    actualizarEstado(
+        "Cargando Qgis2web...",
+        "cargando"
+    );
+
+    /*
+        El parámetro evita que el navegador utilice
+        una versión anterior guardada en caché.
+    */
+
+    mapaQgis.src =
+        `${RUTA_MAPA_QGIS}?v=${Date.now()}`;
+}
+
+
+/* ==========================================
+   COMPROBAR EL DOCUMENTO DEL IFRAME
+=========================================== */
+
+function obtenerDocumentoMapa() {
+    if (!mapaQgis) {
+        return null;
+    }
+
+    try {
+        return mapaQgis.contentDocument;
+
+    } catch (error) {
+        console.warn(
+            "No se pudo revisar el documento del mapa:",
+            error
+        );
+
+        return null;
+    }
+}
+
+
+/* ==========================================
+   DETECTAR PÁGINA PRINCIPAL DUPLICADA
+
+   Se comprueban únicamente identificadores
+   exclusivos de nuestra página principal.
+=========================================== */
+
+function contienePaginaPrincipalDuplicada() {
+    const documentoMapa =
+        obtenerDocumentoMapa();
+
+    if (!documentoMapa) {
+        return false;
+    }
+
+    const contienePanelPrincipal =
+        Boolean(
+            documentoMapa.getElementById(
+                "panelContextual"
+            )
+        );
+
+    const contieneEstadoPrincipal =
+        Boolean(
+            documentoMapa.getElementById(
+                "estadoSistema"
+            )
+        );
+
+    const contieneMenuPrincipal =
+        Boolean(
+            documentoMapa.querySelector(
+                "nav.menu-lateral"
+            )
+        );
+
+    return (
+        contienePanelPrincipal ||
+        contieneEstadoPrincipal ||
+        contieneMenuPrincipal
+    );
+}
+
+
+/* ==========================================
+   COMPROBAR SI ES QGIS2WEB
+=========================================== */
+
+function contieneMapaQgis2web() {
+    const documentoMapa =
+        obtenerDocumentoMapa();
+
+    if (!documentoMapa) {
+        return false;
+    }
+
+    return Boolean(
+        documentoMapa.getElementById("map")
+    );
+}
+
+
+/* ==========================================
+   DETECTAR ERROR 404
+=========================================== */
+
+function contienePaginaNoEncontrada() {
+    const documentoMapa =
+        obtenerDocumentoMapa();
+
+    if (
+        !documentoMapa ||
+        !documentoMapa.body
+    ) {
+        return false;
+    }
+
+    const texto =
+        documentoMapa.body.innerText || "";
+
+    return /cannot get|404|not found/i.test(
+        texto
+    );
+}
+
+
+/* ==========================================
+   PERSONALIZAR EL MAPA INTERNO
+=========================================== */
+
+function personalizarMapaInterno() {
+    if (
+        !ventanaMapa ||
+        !ventanaMapa.document ||
+        !mapaInterno
+    ) {
+        return;
+    }
+
+    const documentoMapa =
+        ventanaMapa.document;
+
+    /*
+        Corregir el tamaño fijo de 884 × 588
+        generado por Qgis2web.
+    */
+
+    if (
+        !documentoMapa.getElementById(
+            "estilosGeoVisorPrincipal"
+        )
+    ) {
+        const estilos =
+            documentoMapa.createElement("style");
+
+        estilos.id =
+            "estilosGeoVisorPrincipal";
+
+        estilos.textContent = `
+            html,
+            body,
+            #map {
+                height: 100% !important;
+                margin: 0 !important;
+                min-height: 100% !important;
+                overflow: hidden !important;
+                padding: 0 !important;
+                width: 100% !important;
+            }
+
+            /*
+                Ocultamos los controles duplicados,
+                porque la página principal ya tiene
+                buscador y botones de zoom.
+            */
+
+            .leaflet-control-zoom,
+            .leaflet-control-locate,
+            .leaflet-control-photon,
+            .leaflet-control-search {
+                display: none !important;
+            }
+
+            /*
+                Conservamos el control de capas.
+            */
+
+            .leaflet-control-layers {
+                border:
+                    1px solid rgba(
+                        130,
+                        206,
+                        0,
+                        0.48
+                    ) !important;
+
+                border-radius:
+                    10px !important;
+
+                box-shadow:
+                    0 8px 24px
+                    rgba(
+                        33,
+                        27,
+                        45,
+                        0.24
+                    ) !important;
+            }
+
+            .leaflet-control-layers-expanded {
+                max-height:
+                    calc(100vh - 35px) !important;
+
+                overflow-y:
+                    auto !important;
+            }
+
+            .leaflet-popup-content-wrapper {
+                border-radius:
+                    12px !important;
+            }
+
+            .leaflet-control-attribution {
+                font-size:
+                    8px !important;
+            }
+        `;
+
+        documentoMapa.head.appendChild(
+            estilos
+        );
+    }
+
+    /*
+        Apagar inicialmente las capas que
+        cubren demasiado el mapa.
+
+        No se eliminan: siguen disponibles
+        dentro del control de capas.
+    */
+
+    const capasApagadas = [
+        "layer_salud_buffer_1000_1",
+        "layer_Equipamento_buffer_500_2",
+        "layer_Centroide_5",
+        "layer_Puntos_meandros_7",
+        "layer_Riesgos_inundaciones_buffer_100_10"
+    ];
+
+    capasApagadas.forEach(
+        (nombreVariable) => {
+            const capa =
+                ventanaMapa[nombreVariable];
+
+            if (
+                capa &&
+                mapaInterno.hasLayer(capa)
+            ) {
+                mapaInterno.removeLayer(capa);
+            }
+        }
+    );
+}
+
+
+/* ==========================================
+   GUARDAR VISTA INICIAL
+=========================================== */
+
+function guardarVistaInicial() {
+    if (!mapaInterno) {
+        return;
+    }
+
+    const centro =
+        mapaInterno.getCenter();
+
+    const zoom =
+        mapaInterno.getZoom();
+
+    if (centro) {
+        centroInicial = [
+            centro.lat,
+            centro.lng
+        ];
+    }
+
+    if (Number.isFinite(zoom)) {
+        zoomInicial = zoom;
+    }
+}
+
+
+/* ==========================================
+   AJUSTAR TAMAÑO DEL MAPA
+=========================================== */
+
+function ajustarMapaInterno() {
+    if (
+        mapaInterno &&
+        typeof mapaInterno.invalidateSize ===
+            "function"
+    ) {
+        mapaInterno.invalidateSize({
+            animate: false,
+            pan: false
+        });
+    }
+}
+
+
+/* ==========================================
+   COORDENADAS DEL CURSOR
+=========================================== */
+
+function registrarEventosMapa() {
+    if (
+        !mapaInterno ||
+        eventosMapaRegistrados
+    ) {
+        return;
+    }
+
+    eventosMapaRegistrados = true;
+
+    mapaInterno.on(
+        "mousemove",
+        (evento) => {
+            if (!textoCoordenadas) {
+                return;
+            }
+
+            const latitud =
+                evento.latlng.lat.toFixed(6);
+
+            const longitud =
+                evento.latlng.lng.toFixed(6);
+
+            textoCoordenadas.textContent =
+                `${latitud}, ${longitud}`;
+        }
+    );
+}
+
+
+/* ==========================================
+   CONECTAR CON LEAFLET
+=========================================== */
+
+function intentarConectarMapa() {
+    if (
+        !mapaQgis ||
+        !mapaQgis.contentWindow
+    ) {
+        return false;
+    }
+
+    try {
+        const posibleVentana =
+            mapaQgis.contentWindow;
+
+        const posibleMapa =
+            posibleVentana.map;
+
+        const posibleLeaflet =
+            posibleVentana.L;
+
+        const mapaDisponible =
+            posibleMapa &&
+            typeof posibleMapa.getCenter ===
+                "function" &&
+            typeof posibleMapa.getZoom ===
+                "function" &&
+            typeof posibleMapa.setView ===
+                "function" &&
+            typeof posibleMapa.invalidateSize ===
+                "function";
+
+        const leafletDisponible =
+            posibleLeaflet &&
+            typeof posibleLeaflet.popup ===
+                "function";
+
+        if (
+            !mapaDisponible ||
+            !leafletDisponible
+        ) {
+            return false;
+        }
+
+        ventanaMapa =
+            posibleVentana;
+
+        mapaInterno =
+            posibleMapa;
+
+        leafletInterno =
+            posibleLeaflet;
+
+        /*
+            Primero guardamos la vista original.
+            Después apagamos las capas secundarias.
+        */
+
+        guardarVistaInicial();
+        personalizarMapaInterno();
+        registrarEventosMapa();
+
+        setTimeout(
+            () => {
+                ajustarMapaInterno();
+
+                ocultarPantallaCarga();
+
+                mapaQgis.classList.remove(
+                    "oculto"
+                );
+
+                mapaQgis.classList.add(
+                    "visible"
+                );
+
+                actualizarEstado(
+                    "Mapa conectado correctamente",
+                    "activo"
+                );
+            },
+            350
+        );
+
+        console.log(
+            "Mapa Leaflet conectado correctamente."
+        );
+
+        return true;
+
+    } catch (error) {
+        console.warn(
+            "Leaflet todavía está cargando:",
+            error
+        );
+
+        return false;
+    }
+}
+
+
+/* ==========================================
+   CONTROL DE CONEXIÓN
+=========================================== */
+
+function detenerConexion() {
+    if (temporizadorConexion !== null) {
+        clearInterval(
+            temporizadorConexion
+        );
+
+        temporizadorConexion = null;
+    }
+}
+
+function iniciarConexionMapa() {
+    detenerConexion();
+
+    intentosConexion = 0;
+
+    const revisar = () => {
+        intentosConexion += 1;
+
+        /*
+            Solamente se muestra el error de
+            duplicación cuando existen elementos
+            exclusivos de nuestra página principal.
+        */
+
+        if (contienePaginaPrincipalDuplicada()) {
+            mostrarError(
+                "Se cargó el index.html equivocado",
+                "El archivo mapa/qgis2web/index.html " +
+                "contiene nuevamente la página principal. " +
+                "Reemplázalo por el index.html original " +
+                "generado por Qgis2web."
+            );
+
+            return;
+        }
+
+        if (contienePaginaNoEncontrada()) {
+            mostrarError(
+                "No se encontró Qgis2web",
+                "Comprueba que exista el archivo " +
+                "mapa/qgis2web/index.html."
+            );
+
+            return;
+        }
+
+        if (intentarConectarMapa()) {
+            detenerConexion();
+            return;
+        }
+
+        if (
+            intentosConexion >=
+            MAXIMO_INTENTOS
+        ) {
+            detenerConexion();
+
+            if (!contieneMapaQgis2web()) {
+                mostrarError(
+                    "El archivo no corresponde a Qgis2web",
+                    "El index.html ubicado dentro de " +
+                    "mapa/qgis2web no contiene el elemento " +
+                    '<div id="map"></div>.'
+                );
+
+                return;
+            }
+
+            mostrarError(
+                "Leaflet no pudo iniciarse",
+                "El index.html del mapa existe, pero faltan " +
+                "archivos o carpetas de la exportación. " +
+                "Comprueba css, data, js, legend y webfonts."
+            );
+        }
+    };
+
+    revisar();
+
+    temporizadorConexion =
+        setInterval(
+            revisar,
+            INTERVALO_CONEXION
+        );
+}
+
+
+/* ==========================================
+   EVENTOS DEL IFRAME
+=========================================== */
+
+if (mapaQgis) {
+    mapaQgis.addEventListener(
+        "load",
+        () => {
+            actualizarEstado(
+                "Preparando Leaflet...",
+                "cargando"
+            );
+
+            iniciarConexionMapa();
+        }
+    );
+
+    mapaQgis.addEventListener(
+        "error",
+        () => {
+            mostrarError(
+                "No se pudo abrir el mapa",
+                "Comprueba que exista la carpeta " +
+                "mapa/qgis2web con todos sus archivos."
+            );
+        }
+    );
+}
+
+
+/* ==========================================
+   REINTENTAR MAPA
+=========================================== */
+
+if (btnReintentarMapa) {
+    btnReintentarMapa.addEventListener(
+        "click",
+        cargarMapaQgis
+    );
+}
+
+
+/* ==========================================
+   MENÚ LATERAL
+=========================================== */
+
+function mostrarSeccion(nombre) {
+    opcionesMenu.forEach(
+        (opcion) => {
+            const esActiva =
+                opcion.dataset.seccion === nombre;
+
+            opcion.classList.toggle(
+                "activa",
+                esActiva
+            );
+        }
+    );
+
+    seccionesPanel.forEach(
+        (seccion) => {
+            const esActiva =
+                seccion.dataset.contenido ===
+                nombre;
+
+            seccion.classList.toggle(
+                "activa",
+                esActiva
+            );
+        }
+    );
+
+    if (
+        tituloPanel &&
+        titulosPanel[nombre]
+    ) {
+        tituloPanel.textContent =
+            titulosPanel[nombre];
+    }
+
+    if (panelContextual) {
+        panelContextual.classList.remove(
+            "oculto"
+        );
+    }
+}
+
+opcionesMenu.forEach(
+    (opcion) => {
+        opcion.addEventListener(
+            "click",
+            () => {
+                mostrarSeccion(
+                    opcion.dataset.seccion
+                );
+            }
+        );
+    }
+);
+
+
+/* ==========================================
+   MOSTRAR U OCULTAR PANEL
+=========================================== */
+
+function alternarPanel() {
+    if (!panelContextual) {
+        return;
+    }
+
+    panelContextual.classList.toggle(
+        "oculto"
+    );
+
+    const panelOculto =
+        panelContextual.classList.contains(
+            "oculto"
+        );
+
+    if (btnPanel) {
+        btnPanel.title =
+            panelOculto
+                ? "Mostrar panel"
+                : "Ocultar panel";
+
+        btnPanel.setAttribute(
+            "aria-label",
+            btnPanel.title
+        );
+    }
+
+    setTimeout(
+        ajustarMapaInterno,
+        320
+    );
+}
+
+if (btnPanel) {
+    btnPanel.addEventListener(
+        "click",
+        alternarPanel
+    );
+}
+
+if (btnCerrarPanel) {
+    btnCerrarPanel.addEventListener(
+        "click",
+        alternarPanel
+    );
+}
+
+
+/* ==========================================
+   COMPROBAR DISPONIBILIDAD
+=========================================== */
+
+function mapaDisponible() {
+    if (
+        mapaInterno &&
+        leafletInterno
+    ) {
+        return true;
+    }
+
+    alert(
+        "El mapa todavía se está preparando. " +
+        "Espera unos segundos."
+    );
+
+    return false;
+}
+
+
+/* ==========================================
+   ZOOM
+=========================================== */
+
+if (btnAcercar) {
+    btnAcercar.addEventListener(
+        "click",
+        () => {
+            if (mapaDisponible()) {
+                mapaInterno.zoomIn();
+            }
+        }
+    );
+}
+
+if (btnAlejar) {
+    btnAlejar.addEventListener(
+        "click",
+        () => {
+            if (mapaDisponible()) {
+                mapaInterno.zoomOut();
+            }
+        }
+    );
+}
+
+
+/* ==========================================
+   RESTABLECER VISTA
+=========================================== */
+
+if (btnCentrar) {
+    btnCentrar.addEventListener(
+        "click",
+        () => {
+            if (!mapaDisponible()) {
+                return;
+            }
+
+            if (
+                centroInicial &&
+                Number.isFinite(zoomInicial)
+            ) {
+                mapaInterno.setView(
+                    centroInicial,
+                    zoomInicial,
+                    {
+                        animate: true
+                    }
+                );
+
+                return;
+            }
+
+            mapaInterno.setView(
+                centroRespaldo,
+                zoomRespaldo
+            );
+        }
+    );
+}
+
+
+/* ==========================================
+   LEER COORDENADAS
+=========================================== */
+
+function leerCoordenadas() {
+    if (!campoBusqueda) {
+        return null;
+    }
+
+    const texto =
+        campoBusqueda.value.trim();
+
+    const partes =
+        texto.split(",");
+
+    if (partes.length !== 2) {
+        alert(
+            "Ingresa la latitud y longitud " +
+            "separadas por una coma.\n\n" +
+            "Ejemplo: -3.3542, -79.8350"
+        );
+
+        return null;
+    }
+
+    const latitud =
+        Number(partes[0].trim());
+
+    const longitud =
+        Number(partes[1].trim());
+
+    const coordenadasValidas =
+        Number.isFinite(latitud) &&
+        Number.isFinite(longitud) &&
+        latitud >= -90 &&
+        latitud <= 90 &&
+        longitud >= -180 &&
+        longitud <= 180;
+
+    if (!coordenadasValidas) {
+        alert(
+            "Las coordenadas no son válidas.\n\n" +
+            "Latitud: entre -90 y 90.\n" +
+            "Longitud: entre -180 y 180."
+        );
+
+        return null;
+    }
+
+    return {
+        latitud,
+        longitud
+    };
+}
+
+
+/* ==========================================
+   BUSCAR COORDENADAS
+=========================================== */
+
+function buscarCoordenadas() {
+    if (!mapaDisponible()) {
+        return;
+    }
+
+    const coordenadas =
+        leerCoordenadas();
+
+    if (!coordenadas) {
+        return;
+    }
+
+    const {
+        latitud,
+        longitud
+    } = coordenadas;
+
+    mapaInterno.setView(
+        [
+            latitud,
+            longitud
+        ],
+        18,
+        {
+            animate: true
+        }
+    );
+
+    leafletInterno
+        .popup({
+            maxWidth: 270,
+            closeButton: true
+        })
+        .setLatLng([
+            latitud,
+            longitud
+        ])
+        .setContent(`
+            <div style="
+                font-family:
+                    'Segoe UI',
+                    Arial,
+                    sans-serif;
+
+                min-width:
+                    190px;
+
+                padding:
+                    3px;
+            ">
+                <strong style="
+                    color:
+                        #30283f;
+
+                    display:
+                        block;
+
+                    font-size:
+                        14px;
+
+                    margin-bottom:
+                        8px;
+                ">
+                    Coordenadas localizadas
+                </strong>
+
+                <div style="
+                    color:
+                        #5e6268;
+
+                    font-size:
+                        12px;
+
+                    line-height:
+                        1.6;
+                ">
+                    <strong>
+                        Latitud:
+                    </strong>
+
+                    ${latitud}
+
+                    <br>
+
+                    <strong>
+                        Longitud:
+                    </strong>
+
+                    ${longitud}
+                </div>
+            </div>
+        `)
+        .openOn(mapaInterno);
+
+    if (textoCoordenadas) {
+        textoCoordenadas.textContent =
+            `${latitud}, ${longitud}`;
+    }
+}
+
+if (btnBuscar) {
+    btnBuscar.addEventListener(
+        "click",
+        buscarCoordenadas
+    );
+}
+
+if (campoBusqueda) {
+    campoBusqueda.addEventListener(
+        "keydown",
+        (evento) => {
+            if (evento.key === "Enter") {
+                evento.preventDefault();
+
+                buscarCoordenadas();
+            }
+        }
+    );
+}
+
+
+/* ==========================================
+   PANTALLA COMPLETA
+=========================================== */
+
+async function alternarPantallaCompleta() {
+    try {
+        if (!document.fullscreenElement) {
+            await document.documentElement
+                .requestFullscreen();
+        } else {
+            await document.exitFullscreen();
+        }
+
+    } catch (error) {
+        console.error(
+            "No se pudo cambiar el modo " +
+            "de pantalla completa:",
+            error
+        );
+    }
+}
+
+if (btnPantallaCompleta) {
+    btnPantallaCompleta.addEventListener(
+        "click",
+        alternarPantallaCompleta
+    );
+}
+
+document.addEventListener(
+    "fullscreenchange",
+    () => {
+        if (!btnPantallaCompleta) {
+            return;
+        }
+
+        const pantallaCompleta =
+            Boolean(
+                document.fullscreenElement
+            );
+
+        btnPantallaCompleta.textContent =
+            pantallaCompleta
+                ? "🗗"
+                : "⛶";
+
+        btnPantallaCompleta.title =
+            pantallaCompleta
+                ? "Salir de pantalla completa"
+                : "Activar pantalla completa";
+
+        btnPantallaCompleta.setAttribute(
+            "aria-label",
+            btnPantallaCompleta.title
+        );
+
+        setTimeout(
+            ajustarMapaInterno,
+            250
+        );
+    }
+);
+
+
+/* ==========================================
+   MODAL DE INFORMACIÓN
+=========================================== */
+
+if (
+    btnInformacion &&
+    modalInformacion
+) {
+    btnInformacion.addEventListener(
+        "click",
+        () => {
+            if (!modalInformacion.open) {
+                modalInformacion.showModal();
+            }
+        }
+    );
+}
+
+if (
+    btnCerrarModal &&
+    modalInformacion
+) {
+    btnCerrarModal.addEventListener(
+        "click",
+        () => {
+            modalInformacion.close();
+        }
+    );
+}
+
+if (modalInformacion) {
+    modalInformacion.addEventListener(
+        "click",
+        (evento) => {
+            const rectangulo =
+                modalInformacion
+                    .getBoundingClientRect();
+
+            const clicDentro =
+                evento.clientX >=
+                    rectangulo.left &&
+                evento.clientX <=
+                    rectangulo.right &&
+                evento.clientY >=
+                    rectangulo.top &&
+                evento.clientY <=
+                    rectangulo.bottom;
+
+            if (!clicDentro) {
+                modalInformacion.close();
+            }
+        }
+    );
+}
+
+
+/* ==========================================
+   REDIMENSIONAR
+=========================================== */
+
+let temporizadorRedimension = null;
+
+window.addEventListener(
+    "resize",
+    () => {
+        clearTimeout(
+            temporizadorRedimension
+        );
+
+        temporizadorRedimension =
+            setTimeout(
+                ajustarMapaInterno,
+                150
+            );
+    }
+);
+
+
+/* ==========================================
+   INICIALIZACIÓN
+=========================================== */
+
+window.addEventListener(
+    "load",
+    () => {
+        mostrarSeccion("resumen");
+
+        cargarMapaQgis();
+    }
+);
